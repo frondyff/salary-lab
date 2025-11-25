@@ -14,6 +14,8 @@ import xgboost as xgb
 import shap
 import matplotlib.pyplot as plt
 import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 # --------------------------------------------------
 # Streamlit basic config
@@ -381,6 +383,173 @@ def show_global_salaries(df):
     - Cluster centers (X markers) show the "typical profile" for each group.
     """)
 
+        # ---------------------------------------------------------
+    # Figure E – Remote Work vs Average Salary by Year
+    # ---------------------------------------------------------
+    st.markdown("### Remote Work vs Average Salary by Year")
+
+    if {"work_year", "remote_work_encoded", "salary_in_usd"}.issubset(df_f.columns):
+
+        # 1) Compute trends
+        trend_df = df_f.copy()
+        trend_df["is_remote"] = (trend_df["remote_work_encoded"] == 2).astype(int)
+
+        yearly = (
+            trend_df.groupby("work_year")
+                    .agg(remote_share=("is_remote", "mean"),
+                         avg_salary_usd=("salary_in_usd", "mean"))
+                    .reset_index()
+        )
+        yearly["remote_share_pct"] = yearly["remote_share"] * 100
+
+        # 2) Build dual-axis line chart
+        fig = make_subplots(
+            specs=[[{"secondary_y": True}]],
+            subplot_titles=["Remote Roles vs Average Salary Over Time"]
+        )
+
+        # Remote share (%)
+        fig.add_trace(
+            go.Scatter(
+                x=yearly["work_year"],
+                y=yearly["remote_share_pct"],
+                mode="lines+markers",
+                name="Remote roles (%)",
+                line=dict(width=3),
+                hovertemplate="Year=%{x}<br>Remote=%{y:.1f}%<extra></extra>"
+            ),
+            secondary_y=False
+        )
+
+        # Average salary (USD)
+        fig.add_trace(
+            go.Scatter(
+                x=yearly["work_year"],
+                y=yearly["avg_salary_usd"],
+                mode="lines+markers",
+                name="Avg salary (USD)",
+                line=dict(width=3, dash="dot"),
+                hovertemplate="Year=%{x}<br>Avg salary=$%{y:,.0f}<extra></extra>"
+            ),
+            secondary_y=True
+        )
+
+        # 3) Highlight COVID (2020–2021)
+        fig.add_vrect(
+            x0=2019.5, x1=2021.5,
+            fillcolor="LightSalmon",
+            opacity=0.18,
+            layer="below",
+            line_width=0,
+            annotation_text="COVID period",
+            annotation_position="top left"
+        )
+
+        # Optional: Post-COVID shading (2022+)
+        if yearly["work_year"].max() >= 2022:
+            fig.add_vrect(
+                x0=2021.5, x1=yearly["work_year"].max() + 0.5,
+                fillcolor="LightGreen",
+                opacity=0.10,
+                layer="below",
+                line_width=0,
+                annotation_text="Post-COVID / RTO",
+                annotation_position="top right"
+            )
+
+        # 4) Styling
+        fig.update_layout(
+            template="plotly_white",
+            showlegend=True,
+            legend_title_text="Series",
+            xaxis_title="Year",
+            title_text="Remote Roles vs Average Salary (COVID and Post-COVID)",
+            margin=dict(l=40, r=40, t=60, b=40),
+        )
+
+        fig.update_yaxes(
+            title_text="Remote roles (%)",
+            range=[0, 100],
+            secondary_y=False
+        )
+        fig.update_yaxes(
+            title_text="Average salary (USD)",
+            secondary_y=True
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption(
+            "This chart tracks how the share of fully remote roles and average salaries evolved over time. "
+            "The orange band highlights the COVID period (2020–2021), when remote work spiked in many companies. "
+            "The green band marks the post-COVID / return-to-office phase, where we can see whether remote roles "
+            "stayed high or pulled back, and how salaries responded year by year."
+        )
+
+        # ---------------------------------------------------------
+        # Figure F – Global Heatmap: Pay vs Cost of Living
+        # ---------------------------------------------------------
+        st.markdown("### Figure F – Global Heatmap of Pay vs Cost of Living")
+
+        df_map = df_f.copy()
+
+        # If employee_residence is missing, reconstruct from country_name_* dummies
+        if "employee_residence" not in df_map.columns:
+            country_cols = [c for c in df_map.columns if c.startswith("country_name_")]
+            if country_cols:
+                df_map["employee_residence"] = (
+                    df_map[country_cols]
+                    .idxmax(axis=1)
+                    .str.replace("country_name_", "", regex=False)
+                )
+
+        required_cols = {"employee_residence", "salary_adj", "salary_in_usd", "cost_of_living_index"}
+        if required_cols.issubset(df_map.columns):
+
+            # Aggregate to country level
+            country_stats = (
+                df_map.groupby("employee_residence")
+                      .agg(
+                          avg_salary_adj=("salary_adj", "mean"),
+                          avg_salary_raw=("salary_in_usd", "mean"),
+                          avg_col_index=("cost_of_living_index", "mean"),
+                          n_roles=("salary_in_usd", "size")
+                      )
+                      .reset_index()
+            )
+
+            fig_map = px.choropleth(
+                country_stats,
+                locations="employee_residence",
+                locationmode="country names",
+                color="avg_salary_adj",
+                hover_name="employee_residence",
+                hover_data={
+                    "avg_salary_adj": ":,.0f",
+                    "avg_salary_raw": ":,.0f",
+                    "avg_col_index": ":.0f",
+                    "n_roles": True
+                },
+                color_continuous_scale="Viridis",
+                title="COL-Adjusted Average Salary by Country"
+            )
+
+            fig_map.update_layout(
+                coloraxis_colorbar_title="Avg COL-adjusted salary (USD)",
+                margin=dict(l=0, r=0, t=60, b=0)
+            )
+
+            st.plotly_chart(fig_map, use_container_width=True)
+
+            st.caption(
+                "Each country is shaded by its **average salary after adjusting for cost of living** "
+                "(darker = better purchasing power for data roles). "
+                "Hover to see the raw average salary and the local cost-of-living index. "
+                "Countries with high COL-adjusted pay are the most attractive once we account for how expensive it is to live there."
+            )
+
+        else:
+            st.info("Map not shown: missing employee_residence, salary_adj, salary_in_usd, or cost_of_living_index columns.")
 
 def show_col_impact(df):
     st.title("2. Cost of Living Impact")
