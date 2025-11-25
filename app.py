@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+from sklearn.decomposition import PCA
 
 # --------------------------------------------------
 # Streamlit basic config
@@ -24,8 +25,76 @@ st.set_page_config(
     page_title="Beyond Numbers: Global Salary Lab",
     layout="wide"
 )
+# --------------------------------------------------
+# McGill MMA Branding
+# --------------------------------------------------
+MCGILL_RED = "#D6001C"
+MCGILL_DARK = "#1F2430"
 
-st.sidebar.title("Navigation")
+st.markdown(f"""
+<style>
+/* Header */
+.mcgill-header {{
+    padding: 16px 0 12px 0;
+    border-bottom: 3px solid {MCGILL_RED};
+}}
+.mcgill-header h1 {{
+    color: {MCGILL_DARK};
+    margin-bottom: 0px;
+}}
+.mcgill-header p {{
+    color: #666;
+    font-size: 16px;
+    margin-top: 5px;
+}}
+
+/* Buttons */
+.stButton>button {{
+    background-color: {MCGILL_RED};
+    color: white;
+    padding: 8px 22px;
+    border-radius: 100px;
+    border: none;
+    font-weight: 600;
+}}
+.stButton>button:hover {{
+    background-color: #b30018;
+}}
+
+/* Card container */
+.mcgill-card {{
+    background-color: white;
+    padding: 18px;
+    border-radius: 12px;
+    border-top: 4px solid {MCGILL_RED};
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+}}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+def mcgill_header(title):
+    st.markdown(f"""
+    <div class="mcgill-header">
+        <h1>{title}</h1>
+        <p>McGill MMA — MGSC661 Final Project</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def mcgill_card_start(title):
+    st.markdown(f"""
+    <div class="mcgill-card">
+        <h3>{title}</h3>
+    """, unsafe_allow_html=True)
+
+
+def mcgill_card_end():
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.sidebar.markdown(f"<h2 style='color:{MCGILL_RED};'>Navigation</h2>", unsafe_allow_html=True)
 
 
 # --------------------------------------------------
@@ -219,6 +288,7 @@ def train_models(new_df_inter: pd.DataFrame):
 def show_global_salaries(df):
     st.title("1. Global Salaries")
 
+    # --------- sidebar filter ----------
     country = st.sidebar.selectbox(
         "Filter by country (employee_residence)",
         ["All"] + sorted(df["employee_residence"].dropna().unique().tolist())
@@ -227,273 +297,398 @@ def show_global_salaries(df):
     if country != "All":
         df_f = df_f[df_f["employee_residence"] == country]
 
-    # Figure A – Salary by experience level & job group
-    st.markdown("### Salary by Experience Level and Job Group")
-
-    metric_choice = st.radio(
-        "Salary metric",
-        ["Raw salary (USD)", "COL-adjusted salary"],
-        horizontal=True
-    )
-    y_col = "salary_in_usd" if metric_choice == "Raw salary (USD)" else "salary_adj"
-
-    # Encoded → label maps
-    EXPERIENCE_MAP = {
-        1: "Entry",
-        2: "Mid",
-        3: "Senior / Executive"
-    }
-
-    JOB_GROUP_MAP = {
-        "Data Engineering": 1,
-        "Data Science & Research": 2,
-        "Data Analytics & BI": 3,
-        "AI & Machine Learning": 4,
-        "Data Management & Strategy": 5,
-        "Visualization & Modeling": 6,
-        "Other": 7
-    }
-    JOB_GROUP_REV = {v: k for k, v in JOB_GROUP_MAP.items()}
-    df_plot = df_f.copy()
-
-    # Add readable labels
-    if "experience_level_encoded" in df_plot.columns:
-        df_plot["experience_label"] = df_plot["experience_level_encoded"].map(EXPERIENCE_MAP)
-
-    if "job_group_encoded" in df_plot.columns:
-        df_plot["job_group_label"] = df_plot["job_group_encoded"].map(JOB_GROUP_REV)
-
-    # Keep only rows where both labels are known
-    df_plot = df_plot.dropna(subset=["experience_label", "job_group_label"])
-
-
-
-    fig_a = px.box(
-        df_plot,
-        x="experience_label",
-        y=y_col,
-        color="job_group_label",
-        points="all",
-        hover_data={
-            "experience_label": True,
-            "job_group_label": True,
-            y_col: ":,.0f",
-            "work_year": True
-        },
-        category_orders={
-            "experience_label": [EXPERIENCE_MAP[k] for k in sorted(EXPERIENCE_MAP.keys())]
-        },
-        title=f"{y_col} by Experience Level and Job Group"
+    # ========= TABS =========
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        [
+            "Experience & Job Group",
+            "PCA + K-Means Clusters",
+            "Company Size & Europe",
+            "Remote vs Salary (COVID)",
+            "Global Map"
+        ]
     )
 
-    fig_a.update_layout(
-        xaxis_title="Experience level",
-        yaxis_title="Salary (USD)" if y_col == "salary_in_usd" else "COL-adjusted salary (index 100 = US avg)",
-        legend_title="Job group",
-        boxmode="group"
-    )
+    # --------------------------------------------------
+    # TAB 1 – Salary by Experience Level & Job Group
+    # --------------------------------------------------
+    with tab1:
+        st.markdown("### Salary by Experience Level and Job Group")
 
-    st.plotly_chart(fig_a, use_container_width=True)
+        # toggle instead of radio
+        salary_mode = st.toggle("Use COL-adjusted salary?")
+        y_col = "salary_adj" if salary_mode else "salary_in_usd"
 
-    st.caption(
-        "Each box shows the salary distribution for a combination of experience level and job group. "
-        "Dots are individual employees; boxes show median and interquartile range."
-    )
+        # Encoded → label maps
+        EXPERIENCE_MAP = {1: "Entry", 2: "Mid", 3: "Senior / Executive"}
+        JOB_GROUP_MAP = {
+            "Data Engineering": 1,
+            "Data Science & Research": 2,
+            "Data Analytics & BI": 3,
+            "AI & Machine Learning": 4,
+            "Data Management & Strategy": 5,
+            "Visualization & Modeling": 6,
+            "Other": 7,
+        }
+        JOB_GROUP_REV = {v: k for k, v in JOB_GROUP_MAP.items()}
 
-    # Figure D – Cluster map
-    st.markdown("###  Clusters of Experience vs Adjusted Salary")
+        df_plot = df_f.copy()
 
-        # Maps for readable labels
-    experience_labels = {
-    1: "Entry",
-    2: "Mid",
-    3: "Senior / Executive"
-    }
-
-    # Clean copy
-    df_clust = df_f[["experience_level_encoded", "salary_adj"]].dropna().copy()
-    df_clust = df_clust.rename(columns={
-        "experience_level_encoded": "ExperienceLevel",
-        "salary_adj": "SalaryAdj"
-    })
-
-    # Convert experience encodings
-    df_clust["ExperienceLabel"] = df_clust["ExperienceLevel"].map(experience_labels)
-
-    # Run K-means
-    kmeans = KMeans(n_clusters=4, random_state=42)
-    df_clust["Cluster"] = kmeans.fit_predict(df_clust[["ExperienceLevel", "SalaryAdj"]])
-
-    # Cluster centers with readable labels
-    centers = pd.DataFrame(kmeans.cluster_centers_, columns=["ExperienceLevel", "SalaryAdj"])
-    centers["Cluster"] = centers.index
-    centers["ExperienceLabel"] = centers["ExperienceLevel"].round(0).astype(int).map(experience_labels)
-
-    # Sort centers by experience then salary (low → high)
-    ordered = centers.sort_values(["ExperienceLevel", "SalaryAdj"]).reset_index(drop=True)
-    # Map cluster names for user friendliness
-    cluster_names = {
-        ordered.loc[0, "Cluster"]: "Cluster A – Early Career, Lower Pay",
-        ordered.loc[1, "Cluster"]: "Cluster B – Mid-Level, Stable Pay",
-        ordered.loc[2, "Cluster"]: "Cluster C – Senior, Emerging Markets",
-        ordered.loc[3, "Cluster"]: "Cluster D – Senior, High Compensation"
-    }
-
-    df_clust["ClusterName"] = df_clust["Cluster"].map(cluster_names)
-    centers["ClusterName"] = centers["Cluster"].map(cluster_names)
-
-    # Plot
-    fig_d = px.scatter(
-        df_clust,
-        x="ExperienceLabel",
-        y="SalaryAdj",
-        color="ClusterName",
-        hover_data={
-            "ExperienceLabel": True,
-            "SalaryAdj": ":,.0f",
-            "ClusterName": True
-        },
-        title="Talent Segments Based on Experience and COL-Adjusted Salary",
-        opacity=0.6,
-    )
-
-    # Add cluster centers as bigger markers
-    fig_d.add_scatter(
-        x=centers["ExperienceLabel"],
-        y=centers["SalaryAdj"],
-        mode="markers+text",
-        marker=dict(size=16, symbol="x", color="black"),
-        text=[name.replace("Cluster ", "") for name in centers["ClusterName"]],
-        textposition="top center",
-        name="Cluster Centers"
-    )
-
-    fig_d.update_layout(
-        xaxis_title="Experience Level",
-        yaxis_title="COL-Adjusted Salary (USD)",
-        legend_title="Talent Segments",
-    )
-
-    st.plotly_chart(fig_d, use_container_width=True)
-
-    st.caption("""
-    **Interpretation:**
-    - Each point represents an individual employee.
-    - Colors represent segments of the data with similar experience + salary patterns.
-    - Cluster centers (X markers) show the "typical profile" for each group.
-    """)
-
-        # ---------------------------------------------------------
-    # Figure E – Remote Work vs Average Salary by Year
-    # ---------------------------------------------------------
-    st.markdown("### Remote Work vs Average Salary by Year")
-
-    if {"work_year", "remote_work_encoded", "salary_in_usd"}.issubset(df_f.columns):
-
-        # 1) Compute trends
-        trend_df = df_f.copy()
-        trend_df["is_remote"] = (trend_df["remote_work_encoded"] == 2).astype(int)
-
-        yearly = (
-            trend_df.groupby("work_year")
-                    .agg(remote_share=("is_remote", "mean"),
-                         avg_salary_usd=("salary_in_usd", "mean"))
-                    .reset_index()
-        )
-        yearly["remote_share_pct"] = yearly["remote_share"] * 100
-
-        # 2) Build dual-axis line chart
-        fig = make_subplots(
-            specs=[[{"secondary_y": True}]],
-            subplot_titles=["Remote Roles vs Average Salary Over Time"]
-        )
-
-        # Remote share (%)
-        fig.add_trace(
-            go.Scatter(
-                x=yearly["work_year"],
-                y=yearly["remote_share_pct"],
-                mode="lines+markers",
-                name="Remote roles (%)",
-                line=dict(width=3),
-                hovertemplate="Year=%{x}<br>Remote=%{y:.1f}%<extra></extra>"
-            ),
-            secondary_y=False
-        )
-
-        # Average salary (USD)
-        fig.add_trace(
-            go.Scatter(
-                x=yearly["work_year"],
-                y=yearly["avg_salary_usd"],
-                mode="lines+markers",
-                name="Avg salary (USD)",
-                line=dict(width=3, dash="dot"),
-                hovertemplate="Year=%{x}<br>Avg salary=$%{y:,.0f}<extra></extra>"
-            ),
-            secondary_y=True
-        )
-
-        # 3) Highlight COVID (2020–2021)
-        fig.add_vrect(
-            x0=2019.5, x1=2021.5,
-            fillcolor="LightSalmon",
-            opacity=0.18,
-            layer="below",
-            line_width=0,
-            annotation_text="COVID period",
-            annotation_position="top left"
-        )
-
-        # Optional: Post-COVID shading (2022+)
-        if yearly["work_year"].max() >= 2022:
-            fig.add_vrect(
-                x0=2021.5, x1=yearly["work_year"].max() + 0.5,
-                fillcolor="LightGreen",
-                opacity=0.10,
-                layer="below",
-                line_width=0,
-                annotation_text="Post-COVID / RTO",
-                annotation_position="top right"
+        if "experience_level_encoded" in df_plot.columns:
+            df_plot["experience_label"] = df_plot["experience_level_encoded"].map(
+                EXPERIENCE_MAP
             )
 
-        # 4) Styling
-        fig.update_layout(
-            template="plotly_white",
-            showlegend=True,
-            legend_title_text="Series",
-            xaxis_title="Year",
-            title_text="Remote Roles vs Average Salary (COVID and Post-COVID)",
-            margin=dict(l=40, r=40, t=60, b=40),
+        if "job_group_encoded" in df_plot.columns:
+            df_plot["job_group_label"] = df_plot["job_group_encoded"].map(JOB_GROUP_REV)
+
+        df_plot = df_plot.dropna(subset=["experience_label", "job_group_label"])
+
+        fig_a = px.box(
+            df_plot,
+            x="experience_label",
+            y=y_col,
+            color="job_group_label",
+            points="all",
+            hover_data={
+                "experience_label": True,
+                "job_group_label": True,
+                y_col: ":,.0f",
+                "work_year": True,
+            },
+            category_orders={
+                "experience_label": [
+                    EXPERIENCE_MAP[k] for k in sorted(EXPERIENCE_MAP.keys())
+                ]
+            },
+            title=(
+                "COL-adjusted salary by Experience Level and Job Group"
+                if salary_mode
+                else "Raw salary (USD) by Experience Level and Job Group"
+            ),
         )
 
-        fig.update_yaxes(
-            title_text="Remote roles (%)",
-            range=[0, 100],
-            secondary_y=False
-        )
-        fig.update_yaxes(
-            title_text="Average salary (USD)",
-            secondary_y=True
+        fig_a.update_layout(
+            xaxis_title="Experience level",
+            yaxis_title=(
+                "COL-adjusted salary (index 100 = US avg)"
+                if salary_mode
+                else "Salary (USD)"
+            ),
+            legend_title="Job group",
+            boxmode="group",
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_a, use_container_width=True)
 
         st.caption(
-            "This chart tracks how the share of fully remote roles and average salaries evolved over time. "
-            "The orange band highlights the COVID period (2020–2021), when remote work spiked in many companies. "
-            "The green band marks the post-COVID / return-to-office phase, where we can see whether remote roles "
-            "stayed high or pulled back, and how salaries responded year by year."
+            "Each box shows the salary distribution for a combination of experience level and job group. "
+            "Dots are individual employees; boxes show median and interquartile range."
         )
 
-        # ---------------------------------------------------------
-        # Figure F – Global Heatmap: Pay vs Cost of Living
-        # ---------------------------------------------------------
-        st.markdown("### Figure F – Global Heatmap of Pay vs Cost of Living")
+    # --------------------------------------------------
+    # TAB 2 – PCA + K-Means Clusters
+    # --------------------------------------------------
+    with tab2:
+        st.markdown("### Talent Segments Using PCA + K-Means")
+
+        cluster_features = [
+            "experience_level_encoded",
+            "job_group_encoded",
+            "remote_work_encoded",
+            "company_size_encoded",
+            "cost_of_living_index",
+            "salary_adj",
+        ]
+        available_features = [c for c in cluster_features if c in df_f.columns]
+        df_clust = df_f[available_features].dropna().copy()
+
+        if df_clust.shape[0] > 0 and len(available_features) >= 2:
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(df_clust)
+
+            pca = PCA(n_components=2)
+            X_pca = pca.fit_transform(X_scaled)
+            var_ratio = pca.explained_variance_ratio_
+            pc1_var = var_ratio[0] * 100
+            pc2_var = var_ratio[1] * 100
+            total_var = var_ratio.sum() * 100
+
+            kmeans = KMeans(n_clusters=4, random_state=42)
+            clusters = kmeans.fit_predict(X_pca)
+            centers_pca = kmeans.cluster_centers_
+
+            plot_df = pd.DataFrame(
+                {"PC1": X_pca[:, 0], "PC2": X_pca[:, 1], "Cluster": clusters}
+            )
+
+            cluster_name_map = {
+                0: "A – Entry / Early Career Talent",
+                1: "B – Mid-Level Technical Contributors",
+                2: "C – Senior Specialists / High Compensation",
+                3: "D – Senior Roles in Emerging Markets",
+            }
+            plot_df["ClusterLabel"] = plot_df["Cluster"].map(cluster_name_map)
+
+            fig_pca = px.scatter(
+                plot_df,
+                x="PC1",
+                y="PC2",
+                color="ClusterLabel",
+                opacity=0.7,
+                title="K-Means Clusters Visualized with PCA (2 Components)",
+                labels={
+                    "PC1": f"Principal Component 1 ({pc1_var:.1f}% var)",
+                    "PC2": f"Principal Component 2 ({pc2_var:.1f}% var)",
+                    "ClusterLabel": "K-Means Cluster",
+                },
+            )
+
+            fig_pca.add_scatter(
+                x=centers_pca[:, 0],
+                y=centers_pca[:, 1],
+                mode="markers",
+                marker=dict(size=16, symbol="x", color="black"),
+                name="Cluster centers",
+            )
+
+            st.plotly_chart(fig_pca, use_container_width=True)
+
+            st.caption(
+                f"Explained variance – PC1: {pc1_var:.1f}%, PC2: {pc2_var:.1f}%, "
+                f"total: {total_var:.1f}%. The 2D PCA view is a simplification, "
+                "but it still helps us see how K-Means separates different talent profiles."
+            )
+        else:
+            st.info(
+                "Not enough numeric features/rows available to build a PCA + K-Means cluster view."
+            )
+
+    # --------------------------------------------------
+    # TAB 3 – Company Size & European Compensation
+    # --------------------------------------------------
+    with tab3:
+        st.markdown("### Effect of Company Size & European Compensation Structure")
+
+        df_size = df_f.copy()
+
+        company_size_map = {
+            0: "Small (<50)",
+            1: "Medium (50–250)",
+            2: "Large (250–1,000)",
+            3: "Enterprise (>1,000)",
+        }
+        df_size["company_size_label"] = df_size["company_size_encoded"].map(
+            company_size_map
+        )
+
+        if "region" in df_size.columns:
+            df_size["region_group"] = df_size["region"]
+        else:
+            europe_countries = {
+                "United Kingdom",
+                "Ireland",
+                "France",
+                "Germany",
+                "Spain",
+                "Portugal",
+                "Netherlands",
+                "Belgium",
+                "Sweden",
+                "Norway",
+                "Denmark",
+                "Finland",
+                "Switzerland",
+                "Austria",
+                "Italy",
+                "Poland",
+                "Czechia",
+                "Hungary",
+                "Romania",
+                "Greece",
+            }
+            na_countries = {"United States", "Canada"}
+
+            def label_region(country):
+                if country in europe_countries:
+                    return "Europe"
+                elif country in na_countries:
+                    return "North America"
+                else:
+                    return "Other"
+
+            df_size["region_group"] = df_size["employee_residence"].apply(label_region)
+
+        df_size = df_size.dropna(
+            subset=["company_size_label", "region_group", "salary_adj"]
+        )
+
+        group_df = (
+            df_size.groupby(["company_size_label", "region_group"])
+            .agg(avg_salary_adj=("salary_adj", "mean"), n_roles=("salary_adj", "size"))
+            .reset_index()
+        )
+
+        size_order = [
+            "Small (<50)",
+            "Medium (50–250)",
+            "Large (250–1,000)",
+            "Enterprise (>1,000)",
+        ]
+        group_df["company_size_label"] = pd.Categorical(
+            group_df["company_size_label"], ordered=True, categories=size_order
+        )
+
+        fig_size_region = px.bar(
+            group_df.sort_values("company_size_label"),
+            x="company_size_label",
+            y="avg_salary_adj",
+            color="region_group",
+            barmode="group",
+            text_auto=".0f",
+            labels={
+                "company_size_label": "Company size",
+                "avg_salary_adj": "Avg COL-adjusted salary (USD)",
+                "region_group": "Region",
+            },
+            title="COL-Adjusted Salary by Company Size and Region",
+        )
+        fig_size_region.update_layout(
+            xaxis_title="Company Size",
+            yaxis_title="COL-Adjusted Salary (USD)",
+        )
+        st.plotly_chart(fig_size_region, use_container_width=True)
+
+        europe_df = group_df[group_df["region_group"] == "Europe"]
+        if not europe_df.empty:
+            fig_europe = px.bar(
+                europe_df.sort_values("company_size_label"),
+                x="company_size_label",
+                y="avg_salary_adj",
+                text_auto=".0f",
+                labels={
+                    "company_size_label": "Company size",
+                    "avg_salary_adj": "Avg COL-adjusted salary (USD)",
+                },
+                title="European Labor & Compensation Structure (COL-adjusted)",
+            )
+            fig_europe.update_layout(
+                xaxis_title="",
+                yaxis_title="COL-Adjusted Salary (USD)",
+            )
+            st.plotly_chart(fig_europe, use_container_width=True)
+
+        st.caption(
+            "**Effect of company size:** Larger organizations consistently offer higher COL-adjusted salaries "
+            "than small and mid-sized firms. **European structure:** Europe shows lower salary ceilings vs. "
+            "North America, but the gap between small and large firms is narrower, consistent with more regulated "
+            "labor markets and stronger social benefits."
+        )
+
+    # --------------------------------------------------
+    # TAB 4 – Remote Work vs Average Salary
+    # --------------------------------------------------
+    with tab4:
+        st.markdown("### Remote Work vs Average Salary by Year")
+
+        if {"work_year", "remote_work_encoded", "salary_in_usd"}.issubset(df_f.columns):
+            trend_df = df_f.copy()
+            trend_df["is_remote"] = (trend_df["remote_work_encoded"] == 2).astype(int)
+
+            yearly = (
+                trend_df.groupby("work_year")
+                .agg(
+                    remote_share=("is_remote", "mean"),
+                    avg_salary_usd=("salary_in_usd", "mean"),
+                )
+                .reset_index()
+            )
+            yearly["remote_share_pct"] = yearly["remote_share"] * 100
+
+            fig = make_subplots(
+                specs=[[{"secondary_y": True}]],
+                subplot_titles=["Remote Roles vs Average Salary Over Time"],
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=yearly["work_year"],
+                    y=yearly["remote_share_pct"],
+                    mode="lines+markers",
+                    name="Remote roles (%)",
+                    line=dict(width=3),
+                    hovertemplate="Year=%{x}<br>Remote=%{y:.1f}%<extra></extra>",
+                ),
+                secondary_y=False,
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=yearly["work_year"],
+                    y=yearly["avg_salary_usd"],
+                    mode="lines+markers",
+                    name="Avg salary (USD)",
+                    line=dict(width=3, dash="dot"),
+                    hovertemplate="Year=%{x}<br>Avg salary=$%{y:,.0f}<extra></extra>",
+                ),
+                secondary_y=True,
+            )
+
+            fig.add_vrect(
+                x0=2019.5,
+                x1=2021.5,
+                fillcolor="LightSalmon",
+                opacity=0.18,
+                layer="below",
+                line_width=0,
+                annotation_text="COVID period",
+                annotation_position="top left",
+            )
+
+            if yearly["work_year"].max() >= 2022:
+                fig.add_vrect(
+                    x0=2021.5,
+                    x1=yearly["work_year"].max() + 0.5,
+                    fillcolor="LightGreen",
+                    opacity=0.10,
+                    layer="below",
+                    line_width=0,
+                    annotation_text="Post-COVID / RTO",
+                    annotation_position="top right",
+                )
+
+            fig.update_layout(
+                template="plotly_white",
+                showlegend=True,
+                legend_title_text="Series",
+                xaxis_title="Year",
+                title_text="Remote Roles vs Average Salary (COVID and Post-COVID)",
+                margin=dict(l=40, r=40, t=60, b=40),
+            )
+
+            fig.update_yaxes(
+                title_text="Remote roles (%)", range=[0, 100], secondary_y=False
+            )
+            fig.update_yaxes(
+                title_text="Average salary (USD)", secondary_y=True
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.caption(
+                "The orange band highlights the COVID period (2020–2021), when remote work spiked. "
+                "The green band shows the post-COVID / return-to-office phase and how both remote share "
+                "and pay evolved afterwards."
+            )
+        else:
+            st.info("Required columns for the time series are missing.")
+
+    # --------------------------------------------------
+    # TAB 5 – Global Heatmap
+    # --------------------------------------------------
+    with tab5:
+        st.markdown("### Global Heatmap of Pay vs Cost of Living")
 
         df_map = df_f.copy()
-
-        # If employee_residence is missing, reconstruct from country_name_* dummies
         if "employee_residence" not in df_map.columns:
             country_cols = [c for c in df_map.columns if c.startswith("country_name_")]
             if country_cols:
@@ -503,19 +698,22 @@ def show_global_salaries(df):
                     .str.replace("country_name_", "", regex=False)
                 )
 
-        required_cols = {"employee_residence", "salary_adj", "salary_in_usd", "cost_of_living_index"}
+        required_cols = {
+            "employee_residence",
+            "salary_adj",
+            "salary_in_usd",
+            "cost_of_living_index",
+        }
         if required_cols.issubset(df_map.columns):
-
-            # Aggregate to country level
             country_stats = (
                 df_map.groupby("employee_residence")
-                      .agg(
-                          avg_salary_adj=("salary_adj", "mean"),
-                          avg_salary_raw=("salary_in_usd", "mean"),
-                          avg_col_index=("cost_of_living_index", "mean"),
-                          n_roles=("salary_in_usd", "size")
-                      )
-                      .reset_index()
+                .agg(
+                    avg_salary_adj=("salary_adj", "mean"),
+                    avg_salary_raw=("salary_in_usd", "mean"),
+                    avg_col_index=("cost_of_living_index", "mean"),
+                    n_roles=("salary_in_usd", "size"),
+                )
+                .reset_index()
             )
 
             fig_map = px.choropleth(
@@ -528,31 +726,31 @@ def show_global_salaries(df):
                     "avg_salary_adj": ":,.0f",
                     "avg_salary_raw": ":,.0f",
                     "avg_col_index": ":.0f",
-                    "n_roles": True
+                    "n_roles": True,
                 },
                 color_continuous_scale="Viridis",
-                title="COL-Adjusted Average Salary by Country"
+                title="COL-Adjusted Average Salary by Country",
             )
 
             fig_map.update_layout(
                 coloraxis_colorbar_title="Avg COL-adjusted salary (USD)",
-                margin=dict(l=0, r=0, t=60, b=0)
+                margin=dict(l=0, r=0, t=60, b=0),
             )
 
             st.plotly_chart(fig_map, use_container_width=True)
 
             st.caption(
-                "Each country is shaded by its **average salary after adjusting for cost of living** "
-                "(darker = better purchasing power for data roles). "
-                "Hover to see the raw average salary and the local cost-of-living index. "
-                "Countries with high COL-adjusted pay are the most attractive once we account for how expensive it is to live there."
+                "Countries are shaded by **average salary after adjusting for cost of living** "
+                "(darker = better purchasing power for data roles). Hover to see raw salary, "
+                "cost-of-living index, and number of roles."
+            )
+        else:
+            st.info(
+                "Map not shown: missing employee_residence, salary_adj, salary_in_usd, or cost_of_living_index columns."
             )
 
-        else:
-            st.info("Map not shown: missing employee_residence, salary_adj, salary_in_usd, or cost_of_living_index columns.")
-
 def show_col_impact(df):
-    st.title("2. Cost of Living Impact")
+    mcgill_header("2. Cost of Living Impact")
 
     country = st.sidebar.selectbox(
         "Filter by country (employee_residence)",
@@ -597,7 +795,7 @@ def show_col_impact(df):
 
 
 def show_model_performance(results):
-    st.title("3. Model Performance – Ridge vs RandomForest vs XGBoost")
+    mcgill_header("3. Model Performance – Ridge vs RandomForest vs XGBoost")
 
     metrics_df = pd.DataFrame(results).T  # rows = models
     st.subheader("Metrics in Real Salary (USD)")
@@ -619,7 +817,7 @@ def show_model_performance(results):
 
 
 def show_drivers_shap(xgb_model, rf_model, X_train, X_test):
-    st.title("4. Drivers of Salary – Feature Importances & SHAP")
+    mcgill_header("4. Drivers of Salary – Feature Importances & SHAP")
 
     # Figure E – Feature importances
     st.subheader("Feature Importances")
@@ -698,7 +896,7 @@ def show_drivers_shap(xgb_model, rf_model, X_train, X_test):
 
 
 def show_salary_simulator(xgb_model, X_train):
-    st.title("5. Salary Simulator – Try Your Profile")
+    mcgill_header("5. Salary Simulator – Try Your Profile")
 
     # -------------------------------------------
     # Human-readable maps
@@ -870,22 +1068,22 @@ if __name__ == "__main__":
 # ---------------------------------------------------------
 # Global footer (appears on every Streamlit page)
 # ---------------------------------------------------------
-footer = """
+footer = f"""
 <style>
-.footer {
-    font-size: 14px;
-    color: #888888;
+.footer {{
+    font-size: 13px;
+    color: white;
+    background-color: {MCGILL_DARK};
     text-align: center;
-    margin-top: 50px;
-    padding-top: 20px;
-    border-top: 1px solid #e5e5e5;
-}
+    padding: 14px;
+    margin-top: 40px;
+    border-top: 3px solid {MCGILL_RED};
+}}
 </style>
 
 <div class="footer">
-    Created for Final Project — <strong>MGSC661</strong>, Fall 2025<br>
-    McGill University — Master of Management in Analytics (MMA)
+    Created for <strong>MGSC661 – Fall 2025</strong> ·
+    McGill University · Master of Management in Analytics (MMA)
 </div>
 """
-
 st.markdown(footer, unsafe_allow_html=True)
